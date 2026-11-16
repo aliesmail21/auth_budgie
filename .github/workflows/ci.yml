@@ -1,0 +1,78 @@
+name: Continuous Integration
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate-and-test:
+    name: Build, Quality & Test Pipeline
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: budgie_ci_user
+          POSTGRES_PASSWORD: budgie_ci_password
+          POSTGRES_DB: budgie_ci_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      NODE_ENV: test
+      PORT: 3000
+      HOST: 0.0.0.0
+      DATABASE_URL: postgresql://budgie_ci_user:budgie_ci_password@localhost:5432/budgie_ci_test?schema=public
+      CORS_ALLOWED_ORIGINS: http://localhost:3000,http://localhost:5173
+      LOG_LEVEL: warn
+      SWAGGER_ENABLED: false
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js from .nvmrc
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+          cache: 'npm'
+
+      - name: Install dependencies (clean install)
+        run: npm ci
+
+      - name: Validate Prisma schema
+        run: npx prisma validate
+
+      - name: Generate Prisma Client
+        run: npm run prisma:generate
+
+      - name: Check code formatting
+        run: npx prettier --check "src/**/*.ts" "test/**/*.ts"
+
+      - name: Run ESLint
+        run: npm run lint
+
+      - name: Run TypeScript typecheck
+        run: npm run typecheck
+
+      - name: Run Unit Tests with Coverage
+        run: npm run test:cov
+
+      - name: Build Application
+        run: npm run build
+
+      - name: Run End-to-End Tests
+        run: npm run test:e2e
